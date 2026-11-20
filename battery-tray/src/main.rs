@@ -1,4 +1,6 @@
 mod battery;
+#[allow(dead_code)]
+mod render;
 
 fn main() {
     match battery::read() {
