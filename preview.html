@@ -28,18 +28,18 @@ function battery({ level, charge = false, color, scale }) {
   const id = 'b' + n++;
   const fill = level <= 20 && !charge ? '#ff453a' : color;
   const bolt = charge
-    ? '<polygon points="14.8,2.2 8.2,8.2 12.6,8.2 11.4,11.8 18,5.8 13.6,5.8" fill="#000"/>'
+    ? '<polygon points="14.8,2.2 8.2,8.2 12.6,8.2 11.4,11.8 18,5.8 13.6,5.8" transform="translate(13.1 8.5) scale(1.2) translate(-13.1 -7)" fill="#000"/>'
     : '';
-  return `<svg width="${30 * scale}" height="${14 * scale}" viewBox="0 0 30 14" role="img" aria-label="Battery ${level}%">
+  return `<svg width="${30 * scale}" height="${17 * scale}" viewBox="0 0 30 17" role="img" aria-label="Battery ${level}%">
     <defs>
-      <mask id="m${id}"><rect width="26" height="14" rx="4.5" fill="#fff"/>${bolt}</mask>
-      <clipPath id="c${id}"><rect width="${(26 * level) / 100}" height="14"/></clipPath>
+      <mask id="m${id}"><rect width="26" height="17" rx="5.5" fill="#fff"/>${bolt}</mask>
+      <clipPath id="c${id}"><rect width="${(26 * level) / 100}" height="17"/></clipPath>
     </defs>
     <g mask="url(#m${id})">
-      <rect width="26" height="14" rx="4.5" fill="${fill}" opacity=".32"/>
-      <g clip-path="url(#c${id})"><rect width="26" height="14" rx="4.5" fill="${fill}"/></g>
+      <rect width="26" height="17" rx="5.5" fill="${fill}" opacity=".32"/>
+      <g clip-path="url(#c${id})"><rect width="26" height="17" rx="5.5" fill="${fill}"/></g>
     </g>
-    <rect x="27.4" y="4.6" width="2" height="4.8" rx="1" fill="${color}" opacity=".6"/>
+    <rect x="27.4" y="5.5" width="2" height="6" rx="1" fill="${color}" opacity=".6"/>
   </svg>`;
 }
 const states = [

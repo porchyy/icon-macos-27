@@ -4,7 +4,7 @@ A small Rust tray app that replaces the Windows 10 battery icon with a macOS 27 
 
 ## The icon
 
-- Solid rounded body (26x14, radius 4.5), no outline, small nub on the right.
+- Solid rounded body (26x17, radius 5.5), no outline, small nub on the right.
 - No percentage number. Level is the solid part; the rest is the same color at about 32% opacity.
 - Charging: a bolt is cut out of the body.
 - 20% or lower (not charging): fill turns red (`#ff453a`).

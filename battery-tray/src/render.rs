@@ -3,11 +3,15 @@
 
 const VB_W: f32 = 30.0;
 const BODY_W: f32 = 26.0;
-/// Plain icon: 14 tall. With the percentage on, the body is taller so digits fit.
-const PLAIN_H: f32 = 14.0;
-const PLAIN_R: f32 = 4.5;
-const PERCENT_H: f32 = 20.0;
-const PERCENT_R: f32 = 5.0;
+/// Plain icon: 17 tall (about 1.5:1 with the nub, like the iOS 27 reference). With the percentage on,
+/// the body is taller so digits fit. The 14 the bolt polygon was drawn for is `BOLT_H`.
+const PLAIN_H: f32 = 17.0;
+const PLAIN_R: f32 = 5.5;
+const PERCENT_H: f32 = 22.0;
+const PERCENT_R: f32 = 6.0;
+const NUB_H: f32 = 6.0;
+const BOLT_H: f32 = 14.0;
+const BOLT_ZOOM: f32 = 1.2;
 /// Size of one digit "pixel" in viewBox units: about one device pixel at 16 px (100% scaling).
 const CELL: f32 = 1.875;
 const TRACK_ALPHA: f32 = 0.32;
@@ -115,7 +119,9 @@ impl Layout {
 fn sample(vx: f32, vy: f32, fill_w: f32, charging: bool, layout: &Layout) -> f32 {
     if in_round_rect(vx, vy, 0.0, 0.0, BODY_W, layout.body_h, layout.body_r) {
         let cut = if layout.glyphs.is_empty() {
-            charging && in_bolt(vx, vy)
+            // The bolt polygon is drawn for a 14 tall body centered at (13.1, 7); recenter and zoom it.
+            let by = vy - (layout.body_h - BOLT_H) / 2.0;
+            charging && in_bolt(13.1 + (vx - 13.1) / BOLT_ZOOM, 7.0 + (by - 7.0) / BOLT_ZOOM)
         } else {
             layout.in_digits(vx, vy)
         };
@@ -126,7 +132,7 @@ fn sample(vx: f32, vy: f32, fill_w: f32, charging: bool, layout: &Layout) -> f32
         } else {
             TRACK_ALPHA
         }
-    } else if in_round_rect(vx, vy, 27.4, (layout.body_h - 4.8) / 2.0, 2.0, 4.8, 1.0) {
+    } else if in_round_rect(vx, vy, 27.4, (layout.body_h - NUB_H) / 2.0, 2.0, NUB_H, 1.0) {
         NUB_ALPHA
     } else {
         0.0
