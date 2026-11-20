@@ -9,11 +9,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{HSTRING, PCWSTR, w};
 
-use crate::startup;
+use crate::{startup, tray};
 
 const ID_SETTINGS: usize = 1;
 const ID_AUTOSTART: usize = 2;
 const ID_EXIT: usize = 3;
+const ID_PERCENT: usize = 4;
 
 fn open(uri: PCWSTR) {
     unsafe { ShellExecuteW(None, w!("open"), uri, None, None, SW_SHOWNORMAL) };
@@ -29,7 +30,10 @@ pub fn show(hwnd: HWND) {
     unsafe {
         let Ok(menu) = CreatePopupMenu() else { return };
         let autostart = startup::autostart_enabled();
+        let percent = startup::show_percent();
         let _ = AppendMenuW(menu, MF_STRING, ID_SETTINGS, w!("Battery settings"));
+        let flags = if percent { MF_STRING | MF_CHECKED } else { MF_STRING };
+        let _ = AppendMenuW(menu, flags, ID_PERCENT, w!("Show percentage"));
         let flags = if autostart { MF_STRING | MF_CHECKED } else { MF_STRING };
         let _ = AppendMenuW(menu, flags, ID_AUTOSTART, w!("Run at startup"));
         let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
@@ -53,6 +57,11 @@ pub fn show(hwnd: HWND) {
 
         match cmd.0 as usize {
             ID_SETTINGS => open_battery_settings(),
+            ID_PERCENT => {
+                if startup::set_show_percent(!percent).is_ok() {
+                    tray::redraw(hwnd);
+                }
+            }
             ID_AUTOSTART => {
                 let _ = startup::set_autostart(!autostart);
             }

@@ -9,6 +9,8 @@ A small Rust tray app that replaces the Windows 10 battery icon with a macOS 27 
 - Charging: a bolt is cut out of the body.
 - 20% or lower (not charging): fill turns red (`#ff453a`).
 - White on dark taskbars, near-black (`#1a1a1a`) on light ones.
+- Optional percentage (off by default): the body gets taller and the number is cut out of it, drawn from a 3x5
+  pixel digit grid. While charging below 100% a small bolt is shown before the digits.
 
 `battery-icon.svg` is a static example (60%); `preview.html` shows all states, zoomed and at actual size.
 
@@ -16,7 +18,8 @@ A small Rust tray app that replaces the Windows 10 battery icon with a macOS 27 
 
 - Adds a notification-area icon rendered at runtime for the current DPI.
 - Updates on power changes, theme changes, DPI changes and explorer restarts, plus a 60 second fallback poll.
-- Left click opens Windows battery settings. Right click: Battery settings, Run at startup, Exit.
+- Left click opens Windows battery settings. Right click: Battery settings, Show percentage, Run at startup, Exit.
+  The percentage setting is saved as the DWORD `ShowPercent` under `HKCU\Software\BatteryTray`.
 - On first run it explains how to hide the built-in Windows battery icon (Settings > Personalization > Taskbar >
   Turn system icons on or off > Power). An app cannot change that setting itself. If the new icon is not visible,
   drag it out of the ^ overflow menu.
@@ -47,7 +50,8 @@ Startup time was not measured.
 
 ### Known limits
 
-- At 16 px (100% scaling) the bolt is only a few pixels.
+- At 16 px (100% scaling) the bolt is only a few pixels, and the percentage digits are small (clear at 24 px and up).
+  At low levels the knocked-out digits sit on the faint red track, so contrast is low.
 - The taskbar theme is read from `SystemUsesLightTheme`, which Microsoft does not document; on failure it falls back
   to light.
 - Linking prints "multiple non-default manifests"; the Per-Monitor V2 manifest still takes effect (checked at

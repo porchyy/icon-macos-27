@@ -19,7 +19,7 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 use windows::core::{Error, Result, w};
 
-use crate::{battery, render};
+use crate::{battery, render, startup};
 
 /// Callback message sent by the shell for mouse events on the tray icon.
 pub const TRAY_MSG: u32 = WM_APP + 1;
@@ -110,14 +110,16 @@ pub fn update(hwnd: HWND) -> Result<()> {
     let size = unsafe { GetSystemMetricsForDpi(SM_CXSMICON, dpi) }.max(16) as u32;
     let light = light_taskbar();
     // Messages like WM_SETTINGCHANGE fire often; skip the redraw when nothing visible changed.
+    let percent = startup::show_percent();
     let key = u64::from(state.level)
         | u64::from(state.charging) << 8
         | u64::from(light) << 9
+        | u64::from(percent) << 10
         | u64::from(size) << 16;
     if ADDED.load(Ordering::Relaxed) && LAST.load(Ordering::Relaxed) == key {
         return Ok(());
     }
-    let pixels = render::render(state.level, state.charging, light, size);
+    let pixels = render::render(state.level, state.charging, light, percent, size);
     let icon = unsafe { make_icon(&pixels, size)? };
 
     let nid = NOTIFYICONDATAW {
@@ -150,6 +152,12 @@ pub fn update(hwnd: HWND) -> Result<()> {
         unsafe { let _ = DestroyIcon(HICON(old)); }
     }
     Ok(())
+}
+
+/// Redraws even if the battery state is unchanged (a setting such as the percentage was toggled).
+pub fn redraw(hwnd: HWND) {
+    LAST.store(u64::MAX, Ordering::Relaxed);
+    let _ = update(hwnd);
 }
 
 /// Removes the tray icon and frees the icon handle.
