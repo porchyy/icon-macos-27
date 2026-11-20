@@ -1,51 +1,31 @@
-//! Pure icon renderer. Geometry matches `battery-icon.svg` / `preview.html`
-//! (30x14 viewBox) and is drawn with 4x4 supersampling for smooth edges.
+//! Pure icon renderer. The shape is designed on a 16x16 pixel grid (the tray cell at 100% scaling)
+//! and scaled by `size / 16` for other sizes. Every outline edge is snapped to a whole device pixel
+//! so the icon is crisp; only the rounded corners and the fill-level edge are anti-aliased
+//! (4x4 supersampling).
 
-const VB_W: f32 = 30.0;
-const BODY_W: f32 = 26.0;
-/// Plain icon: 17 tall (about 1.5:1 with the nub, like the iOS 27 reference). With the percentage on,
-/// the body is taller so digits fit. The 14 the bolt polygon was drawn for is `BOLT_H`.
-const PLAIN_H: f32 = 17.0;
-const PLAIN_R: f32 = 5.5;
-const PERCENT_H: f32 = 22.0;
-const PERCENT_R: f32 = 6.0;
-const NUB_H: f32 = 6.0;
-const BOLT_H: f32 = 14.0;
-const BOLT_ZOOM: f32 = 1.2;
-/// Size of one digit "pixel" in viewBox units: about one device pixel at 16 px (100% scaling).
-const CELL: f32 = 1.875;
-const TRACK_ALPHA: f32 = 0.32;
-const NUB_ALPHA: f32 = 0.6;
+const GRID: f32 = 16.0;
 const SS: u32 = 4;
 
+/// Body size in grid pixels (nub: 2 wide, 1 gap).
+const BODY_W: f32 = 13.0;
+const PLAIN_H: f32 = 10.0;
+const PERCENT_H: f32 = 11.0;
+const BODY_R: f32 = 3.0;
+const NUB_X: f32 = 14.0;
+const NUB_W: f32 = 2.0;
+
+const TRACK_ALPHA: f32 = 0.5;
+const NUB_ALPHA: f32 = 0.75;
+
+/// Bolt polygon in body-local grid pixels (body 13x10, about 6 wide and 8 tall, centered).
 const BOLT: [(f32, f32); 6] = [
-    (14.8, 2.2),
-    (8.2, 8.2),
-    (12.6, 8.2),
-    (11.4, 11.8),
-    (18.0, 5.8),
-    (13.6, 5.8),
+    (7.55, 1.2),
+    (3.6, 6.0),
+    (6.2, 6.0),
+    (5.45, 8.8),
+    (9.4, 4.0),
+    (6.8, 4.0),
 ];
-
-fn in_round_rect(px: f32, py: f32, x: f32, y: f32, w: f32, h: f32, r: f32) -> bool {
-    let dx = ((px - (x + w / 2.0)).abs() - (w / 2.0 - r)).max(0.0);
-    let dy = ((py - (y + h / 2.0)).abs() - (h / 2.0 - r)).max(0.0);
-    dx * dx + dy * dy <= r * r
-}
-
-fn in_bolt(px: f32, py: f32) -> bool {
-    let mut inside = false;
-    let mut j = BOLT.len() - 1;
-    for i in 0..BOLT.len() {
-        let (xi, yi) = BOLT[i];
-        let (xj, yj) = BOLT[j];
-        if (yi > py) != (yj > py) && px < (xj - xi) * (py - yi) / (yj - yi) + xi {
-            inside = !inside;
-        }
-        j = i;
-    }
-    inside
-}
 
 /// 3x5 digit glyphs, one row per entry, bit 2 = left column.
 const DIGITS: [[u8; 5]; 10] = [
@@ -63,45 +43,83 @@ const DIGITS: [[u8; 5]; 10] = [
 /// Small bolt shown before the digits while charging (below 100%).
 const BOLT_GLYPH: [u8; 5] = [0b001, 0b010, 0b111, 0b010, 0b100];
 
-/// Where the body and the optional digits sit, in viewBox units.
+fn in_round_rect(px: f32, py: f32, x0: f32, y0: f32, x1: f32, y1: f32, r: f32) -> bool {
+    let (w, h) = (x1 - x0, y1 - y0);
+    let dx = ((px - (x0 + w / 2.0)).abs() - (w / 2.0 - r)).max(0.0);
+    let dy = ((py - (y0 + h / 2.0)).abs() - (h / 2.0 - r)).max(0.0);
+    dx * dx + dy * dy <= r * r
+}
+
+fn in_polygon(px: f32, py: f32, pts: &[(f32, f32)]) -> bool {
+    let mut inside = false;
+    let mut j = pts.len() - 1;
+    for i in 0..pts.len() {
+        let (xi, yi) = pts[i];
+        let (xj, yj) = pts[j];
+        if (yi > py) != (yj > py) && px < (xj - xi) * (py - yi) / (yj - yi) + xi {
+            inside = !inside;
+        }
+        j = i;
+    }
+    inside
+}
+
+/// Where everything sits, in device pixels for one icon size.
 struct Layout {
-    body_h: f32,
+    /// Body rectangle (x0, y0, x1, y1), edges snapped to whole pixels.
+    body: (f32, f32, f32, f32),
     body_r: f32,
+    nub: (f32, f32, f32, f32),
+    nub_r: f32,
+    bolt: Vec<(f32, f32)>,
     glyphs: Vec<[u8; 5]>,
+    cell: f32,
     digits_x: f32,
     digits_y: f32,
 }
 
 impl Layout {
-    fn new(level: u8, charging: bool, show_percent: bool) -> Self {
-        if !show_percent {
-            return Self { body_h: PLAIN_H, body_r: PLAIN_R, glyphs: Vec::new(), digits_x: 0.0, digits_y: 0.0 };
-        }
+    fn new(level: u8, charging: bool, show_percent: bool, size: u32) -> Self {
+        let k = size as f32 / GRID;
+        let (body_h, nub_h) = if show_percent { (PERCENT_H, 5.0) } else { (PLAIN_H, 4.0) };
+        let oy = ((GRID - body_h) / 2.0).floor();
+        let snap = |v: f32| (v * k).round();
+        let body = (0.0, snap(oy), snap(BODY_W), snap(oy + body_h));
+        let nub_y = oy + (body_h - nub_h) / 2.0;
+        let nub = (snap(NUB_X), snap(nub_y), snap(NUB_X + NUB_W), snap(nub_y + nub_h));
+
         let mut glyphs = Vec::new();
-        if charging && level < 100 {
-            glyphs.push(BOLT_GLYPH);
-        }
-        if level >= 100 {
-            glyphs.extend([DIGITS[1], DIGITS[0], DIGITS[0]]);
-        } else {
-            if level >= 10 {
-                glyphs.push(DIGITS[usize::from(level / 10)]);
+        if show_percent {
+            if charging && level < 100 {
+                glyphs.push(BOLT_GLYPH);
             }
-            glyphs.push(DIGITS[usize::from(level % 10)]);
+            if level >= 100 {
+                glyphs.extend([DIGITS[1], DIGITS[0], DIGITS[0]]);
+            } else {
+                if level >= 10 {
+                    glyphs.push(DIGITS[usize::from(level / 10)]);
+                }
+                glyphs.push(DIGITS[usize::from(level % 10)]);
+            }
         }
         let cells = glyphs.len() as f32 * 4.0 - 1.0;
+        let (body_w_px, body_h_px) = (body.2 - body.0, body.3 - body.1);
         Self {
-            body_h: PERCENT_H,
-            body_r: PERCENT_R,
-            digits_x: (BODY_W - cells * CELL) / 2.0,
-            digits_y: (PERCENT_H - 5.0 * CELL) / 2.0,
+            body,
+            body_r: BODY_R * k,
+            nub,
+            nub_r: k,
+            bolt: BOLT.iter().map(|&(x, y)| (body.0 + x * k, body.1 + y * k)).collect(),
+            digits_x: (body.0 + (body_w_px - cells * k) / 2.0).round(),
+            digits_y: (body.1 + (body_h_px - 5.0 * k) / 2.0).round(),
+            cell: k,
             glyphs,
         }
     }
 
-    fn in_digits(&self, vx: f32, vy: f32) -> bool {
-        let row = ((vy - self.digits_y) / CELL).floor();
-        let col = ((vx - self.digits_x) / CELL).floor();
+    fn in_digits(&self, px: f32, py: f32) -> bool {
+        let row = ((py - self.digits_y) / self.cell).floor();
+        let col = ((px - self.digits_x) / self.cell).floor();
         if !(0.0..5.0).contains(&row) || col < 0.0 {
             return false;
         }
@@ -115,24 +133,23 @@ impl Layout {
     }
 }
 
-/// Alpha (0..=1) of one sample point in viewBox coordinates.
-fn sample(vx: f32, vy: f32, fill_w: f32, charging: bool, layout: &Layout) -> f32 {
-    if in_round_rect(vx, vy, 0.0, 0.0, BODY_W, layout.body_h, layout.body_r) {
-        let cut = if layout.glyphs.is_empty() {
-            // The bolt polygon is drawn for a 14 tall body centered at (13.1, 7); recenter and zoom it.
-            let by = vy - (layout.body_h - BOLT_H) / 2.0;
-            charging && in_bolt(13.1 + (vx - 13.1) / BOLT_ZOOM, 7.0 + (by - 7.0) / BOLT_ZOOM)
+/// Alpha (0..=1) of one sample point in device pixels.
+fn sample(px: f32, py: f32, fill_x: f32, charging: bool, l: &Layout) -> f32 {
+    let (bx0, by0, bx1, by1) = l.body;
+    if in_round_rect(px, py, bx0, by0, bx1, by1, l.body_r) {
+        let cut = if l.glyphs.is_empty() {
+            charging && in_polygon(px, py, &l.bolt)
         } else {
-            layout.in_digits(vx, vy)
+            l.in_digits(px, py)
         };
         if cut {
             0.0
-        } else if vx < fill_w {
+        } else if px < fill_x {
             1.0
         } else {
             TRACK_ALPHA
         }
-    } else if in_round_rect(vx, vy, 27.4, (layout.body_h - NUB_H) / 2.0, 2.0, NUB_H, 1.0) {
+    } else if in_round_rect(px, py, l.nub.0, l.nub.1, l.nub.2, l.nub.3, l.nub_r) {
         NUB_ALPHA
     } else {
         0.0
@@ -151,13 +168,10 @@ fn color(level: u8, charging: bool, light_taskbar: bool) -> (u8, u8, u8) {
 }
 
 /// Renders a `size` x `size` icon as straight-alpha BGRA (row-major, top-down).
-/// The 30x14 shape fills the width and is centered vertically.
 pub fn render(level: u8, charging: bool, light_taskbar: bool, show_percent: bool, size: u32) -> Vec<u8> {
     let level = level.min(100);
-    let fill_w = BODY_W * f32::from(level) / 100.0;
-    let layout = Layout::new(level, charging, show_percent);
-    let scale = size as f32 / VB_W;
-    let oy = (size as f32 - layout.body_h * scale) / 2.0;
+    let layout = Layout::new(level, charging, show_percent, size);
+    let fill_x = layout.body.0 + (layout.body.2 - layout.body.0) * f32::from(level) / 100.0;
     let (b, g, r) = color(level, charging, light_taskbar);
     let mut out = Vec::with_capacity((size * size * 4) as usize);
     for py in 0..size {
@@ -165,9 +179,9 @@ pub fn render(level: u8, charging: bool, light_taskbar: bool, show_percent: bool
             let mut acc = 0.0;
             for sy in 0..SS {
                 for sx in 0..SS {
-                    let vx = (px as f32 + (sx as f32 + 0.5) / SS as f32) / scale;
-                    let vy = (py as f32 + (sy as f32 + 0.5) / SS as f32 - oy) / scale;
-                    acc += sample(vx, vy, fill_w, charging, &layout);
+                    let x = px as f32 + (sx as f32 + 0.5) / SS as f32;
+                    let y = py as f32 + (sy as f32 + 0.5) / SS as f32;
+                    acc += sample(x, y, fill_x, charging, &layout);
                 }
             }
             let a = (acc / (SS * SS) as f32 * 255.0).round() as u8;
@@ -190,6 +204,29 @@ mod tests {
     }
 
     #[test]
+    fn edges_are_pixel_aligned_at_16px() {
+        let b = render(100, false, false, false, 16);
+        assert_eq!(alpha_at(&b, 16, 6, 2), 0);
+        assert_eq!(alpha_at(&b, 16, 6, 3), 255);
+        assert_eq!(alpha_at(&b, 16, 6, 12), 255);
+        assert_eq!(alpha_at(&b, 16, 6, 13), 0);
+        assert_eq!(alpha_at(&b, 16, 0, 8), 255);
+        assert_eq!(alpha_at(&b, 16, 12, 8), 255);
+        assert_eq!(alpha_at(&b, 16, 13, 8), 0);
+    }
+
+    #[test]
+    fn percent_digits_are_pixel_aligned_at_16px() {
+        // "100" at full level: every pixel in the body rows is either body (255) or digit cut-out (0).
+        let b = render(100, false, false, true, 16);
+        for y in 5..10 {
+            for x in 1..12 {
+                let a = alpha_at(&b, 16, x, y);
+                assert!(a == 0 || a == 255, "pixel ({x},{y}) alpha {a}");
+            }
+        }
+    }
+    #[test]
     fn full_battery_body_is_opaque() {
         let buf = render(100, false, false, false, 32);
         assert_eq!(alpha_at(&buf, 32, 6, 16), 255);
@@ -199,7 +236,7 @@ mod tests {
     fn empty_battery_shows_only_the_track() {
         let buf = render(0, true, false, false, 32);
         let a = alpha_at(&buf, 32, 6, 16);
-        assert!((78..=86).contains(&a), "track alpha was {a}");
+        assert!((124..=132).contains(&a), "track alpha was {a}");
     }
 
     #[test]
@@ -298,7 +335,7 @@ mod tests {
         const CELL: u32 = 128;
         const UP: u32 = 4;
         let states = [(100u8, false), (60, false), (15, false), (70, true), (5, false), (100, true)];
-        let sizes = [16u32, 24, 32];
+        let sizes = [16u32, 20, 24, 32];
         for percent in [false, true] {
         let (w, h) = (CELL * states.len() as u32, CELL * (sizes.len() as u32 * 2));
         let mut rgb = vec![0u8; (w * h * 3) as usize];
@@ -360,10 +397,10 @@ mod tests {
 
     #[test]
     fn layout_glyphs_match_the_number() {
-        assert_eq!(Layout::new(7, false, true).glyphs, vec![DIGITS[7]]);
-        assert_eq!(Layout::new(60, false, true).glyphs, vec![DIGITS[6], DIGITS[0]]);
-        assert_eq!(Layout::new(100, true, true).glyphs, vec![DIGITS[1], DIGITS[0], DIGITS[0]]);
-        assert_eq!(Layout::new(60, true, true).glyphs.len(), 3); // bolt + two digits
-        assert!(Layout::new(60, false, false).glyphs.is_empty());
+        assert_eq!(Layout::new(7, false, true, 16).glyphs, vec![DIGITS[7]]);
+        assert_eq!(Layout::new(60, false, true, 16).glyphs, vec![DIGITS[6], DIGITS[0]]);
+        assert_eq!(Layout::new(100, true, true, 16).glyphs, vec![DIGITS[1], DIGITS[0], DIGITS[0]]);
+        assert_eq!(Layout::new(60, true, true, 16).glyphs.len(), 3); // bolt + two digits
+        assert!(Layout::new(60, false, false, 16).glyphs.is_empty());
     }
 }

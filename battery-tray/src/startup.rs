@@ -3,7 +3,7 @@
 use std::ffi::c_void;
 
 use windows::Win32::System::Registry::{
-    HKEY_CURRENT_USER, REG_DWORD, REG_SZ, RRF_RT_REG_DWORD, RRF_RT_REG_SZ, RegDeleteKeyValueW,
+    HKEY_CURRENT_USER, REG_DWORD, REG_SZ, RRF_RT_ANY, RRF_RT_REG_DWORD, RegDeleteKeyValueW,
     RegGetValueW, RegSetKeyValueW,
 };
 use windows::core::{HSTRING, PCWSTR, Result};
@@ -21,7 +21,7 @@ fn value_exists(subkey: &str, name: &str) -> bool {
             HKEY_CURRENT_USER,
             PCWSTR(subkey.as_ptr()),
             PCWSTR(name.as_ptr()),
-            RRF_RT_REG_SZ,
+            RRF_RT_ANY,
             None,
             None,
             None,
