@@ -1,7 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod battery;
+mod menu;
 mod render;
+mod startup;
 mod tray;
 
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -11,7 +13,7 @@ use windows::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, MSG,
     PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetTimer, TranslateMessage,
-    WINDOW_EX_STYLE, WM_DESTROY, WM_DPICHANGED, WM_POWERBROADCAST, WM_RBUTTONUP,
+    WINDOW_EX_STYLE, WM_DESTROY, WM_DPICHANGED, WM_LBUTTONUP, WM_POWERBROADCAST, WM_RBUTTONUP,
     WM_SETTINGCHANGE, WM_TIMER, WNDCLASSW, WS_OVERLAPPED,
 };
 use windows::core::{Error, Result, w};
@@ -45,10 +47,11 @@ fn log(_: &str) {}
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     match msg {
-        // Temporary exit path until the context menu exists: right-click the icon.
         tray::TRAY_MSG => {
-            if (lparam.0 as u32 & 0xffff) == WM_RBUTTONUP {
-                unsafe { let _ = DestroyWindow(hwnd); }
+            match lparam.0 as u32 & 0xffff {
+                WM_LBUTTONUP => menu::open_battery_settings(),
+                WM_RBUTTONUP => menu::show(hwnd),
+                _ => {}
             }
             LRESULT(0)
         }
@@ -124,14 +127,17 @@ fn main() -> Result<()> {
         tray::update(hwnd)?;
         SetTimer(Some(hwnd), TIMER_REFRESH, REFRESH_MS, None);
 
-        // `--seconds N` quits after N seconds (for smoke tests).
+        // `--seconds N` quits after N seconds and skips the first-run note (for smoke tests).
         let mut args = std::env::args().skip(1);
-        if let (Some(flag), Some(n)) = (args.next(), args.next()) {
-            if flag == "--seconds" {
-                if let Ok(n) = n.parse::<u32>() {
-                    SetTimer(Some(hwnd), TIMER_QUIT, n * 1000, None);
-                }
+        let smoke_secs = match (args.next().as_deref(), args.next()) {
+            (Some("--seconds"), Some(n)) => n.parse::<u32>().ok(),
+            _ => None,
+        };
+        match smoke_secs {
+            Some(n) => {
+                SetTimer(Some(hwnd), TIMER_QUIT, n * 1000, None);
             }
+            None => menu::first_run_note(hwnd),
         }
 
         let mut msg = MSG::default();
