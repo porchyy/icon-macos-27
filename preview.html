@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>macOS 27 battery icon</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 24px; background: #f4f4f4; color: #222; }
+  h1 { font-size: 18px; font-weight: 500; }
+  .grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; max-width: 720px; }
+  .cell { border-radius: 12px; padding: 20px 0; display: flex; justify-content: center; }
+  .dark { background: #1f1f1f; }
+  .light { background: #ececec; border: 1px solid #ddd; }
+  .cap { text-align: center; font-size: 12px; color: #666; margin: 4px 0 12px; }
+  .bar { display: flex; align-items: center; justify-content: flex-end; gap: 10px; height: 40px; padding: 0 14px; border-radius: 8px; max-width: 360px; font-size: 12px; margin-bottom: 8px; }
+  .bar.dark { color: #fff; }
+  .bar.light { color: #111; }
+</style>
+</head>
+<body>
+<h1>macOS 27 battery icon</h1>
+<div id="zoom"></div>
+<h1>Actual size</h1>
+<div id="small"></div>
+<script>
+let n = 0;
+function battery({ level, charge = false, color, scale }) {
+  const id = 'b' + n++;
+  const fill = level <= 20 && !charge ? '#ff453a' : color;
+  const bolt = charge
+    ? '<polygon points="14.8,2.2 8.2,8.2 12.6,8.2 11.4,11.8 18,5.8 13.6,5.8" fill="#000"/>'
+    : '';
+  return `<svg width="${30 * scale}" height="${14 * scale}" viewBox="0 0 30 14" role="img" aria-label="Battery ${level}%">
+    <defs>
+      <mask id="m${id}"><rect width="26" height="14" rx="4.5" fill="#fff"/>${bolt}</mask>
+      <clipPath id="c${id}"><rect width="${(26 * level) / 100}" height="14"/></clipPath>
+    </defs>
+    <g mask="url(#m${id})">
+      <rect width="26" height="14" rx="4.5" fill="${fill}" opacity=".32"/>
+      <g clip-path="url(#c${id})"><rect width="26" height="14" rx="4.5" fill="${fill}"/></g>
+    </g>
+    <rect x="27.4" y="4.6" width="2" height="4.8" rx="1" fill="${color}" opacity=".6"/>
+  </svg>`;
+}
+const states = [
+  ['100%', { level: 100 }],
+  ['60%', { level: 60 }],
+  ['15% (low)', { level: 15 }],
+  ['Charging 70%', { level: 70, charge: true }],
+];
+const themes = [['dark', '#ffffff'], ['light', '#1a1a1a']];
+let zoom = '<div class="grid">';
+for (const [theme, color] of themes) {
+  for (const [label, s] of states) {
+    zoom += `<div><div class="cell ${theme}">${battery({ ...s, color, scale: 4 })}</div><div class="cap">${label}</div></div>`;
+  }
+}
+document.getElementById('zoom').innerHTML = zoom + '</div>';
+let small = '';
+for (const [theme, color] of themes) {
+  small += `<div class="bar ${theme}">${states.map(([, s]) => battery({ ...s, color, scale: 1 })).join('')}<span>9:41 AM</span></div>`;
+}
+document.getElementById('small').innerHTML = small;
+</script>
+</body>
+</html>
