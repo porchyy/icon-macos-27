@@ -1,7 +1,7 @@
 //! Notification-area icon: renders the battery icon to an HICON and keeps it in sync.
 
 use std::ffi::c_void;
-use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, AtomicU64, Ordering};
 
 use windows::Win32::Foundation::{HWND, TRUE};
 use windows::Win32::Graphics::Gdi::{
@@ -27,6 +27,13 @@ const TRAY_ID: u32 = 1;
 
 static ICON: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 static ADDED: AtomicBool = AtomicBool::new(false);
+static LAST: AtomicU64 = AtomicU64::new(u64::MAX);
+
+/// Forget what is on screen (explorer restarted and took the icon with it).
+pub fn reset() {
+    ADDED.store(false, Ordering::Relaxed);
+    LAST.store(u64::MAX, Ordering::Relaxed);
+}
 
 /// True when the taskbar uses the light theme. The registry value is undocumented
 /// (see docs/language-research.md), so any read failure falls back to light.
@@ -101,7 +108,16 @@ pub fn update(hwnd: HWND) -> Result<()> {
     };
     let dpi = unsafe { GetDpiForWindow(hwnd) };
     let size = unsafe { GetSystemMetricsForDpi(SM_CXSMICON, dpi) }.max(16) as u32;
-    let pixels = render::render(state.level, state.charging, light_taskbar(), size);
+    let light = light_taskbar();
+    // Messages like WM_SETTINGCHANGE fire often; skip the redraw when nothing visible changed.
+    let key = u64::from(state.level)
+        | u64::from(state.charging) << 8
+        | u64::from(light) << 9
+        | u64::from(size) << 16;
+    if ADDED.load(Ordering::Relaxed) && LAST.load(Ordering::Relaxed) == key {
+        return Ok(());
+    }
+    let pixels = render::render(state.level, state.charging, light, size);
     let icon = unsafe { make_icon(&pixels, size)? };
 
     let nid = NOTIFYICONDATAW {
@@ -114,12 +130,20 @@ pub fn update(hwnd: HWND) -> Result<()> {
         szTip: tooltip(state.level, state.charging),
         ..Default::default()
     };
-    let op = if ADDED.load(Ordering::Relaxed) { NIM_MODIFY } else { NIM_ADD };
-    if !unsafe { Shell_NotifyIconW(op, &nid) }.as_bool() {
+    // If our idea of "already added" is stale (e.g. explorer restarted), fall back to the other op.
+    let (first, second) = if ADDED.load(Ordering::Relaxed) {
+        (NIM_MODIFY, NIM_ADD)
+    } else {
+        (NIM_ADD, NIM_MODIFY)
+    };
+    let ok = unsafe { Shell_NotifyIconW(first, &nid) }.as_bool()
+        || unsafe { Shell_NotifyIconW(second, &nid) }.as_bool();
+    if !ok {
         unsafe { let _ = DestroyIcon(icon); }
         return Err(Error::from_thread());
     }
     ADDED.store(true, Ordering::Relaxed);
+    LAST.store(key, Ordering::Relaxed);
     // The shell copies the icon, so the previous handle can be freed now.
     let old = ICON.swap(icon.0, Ordering::Relaxed);
     if !old.is_null() {
@@ -130,6 +154,7 @@ pub fn update(hwnd: HWND) -> Result<()> {
 
 /// Removes the tray icon and frees the icon handle.
 pub fn remove(hwnd: HWND) {
+    LAST.store(u64::MAX, Ordering::Relaxed);
     if ADDED.swap(false, Ordering::Relaxed) {
         let nid = NOTIFYICONDATAW {
             cbSize: size_of::<NOTIFYICONDATAW>() as u32,
